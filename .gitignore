@@ -1,0 +1,87 @@
+﻿# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ─── Distribution / packaging ─────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+*.env
+
+# ─── Secrets & credentials ────────────────────────────────────────────────────
+secrets.yaml
+secrets.yml
+secrets.json
+.secrets/
+credentials.json
+token.json
+*.pem
+*.key
+*.p12
+*.pfx
+service_account*.json
+azure_credentials*.json
+github_token*.txt
+jira_token*.txt
+slack_token*.txt
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+log/
+*.log.*
+
+# ─── OS artifacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE / editor configs ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+*.user
+*.sublime-workspace
+*.sublime-project
+
+# ─── Testing & coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# ─── Type checkers ────────────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+.pyright/
+
+# ─── Jupyter notebooks ────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Generated output (sandbox) ───────────────────────────────────────────────
+sandbox_setup/output/
+
+# ─── Terraform (future infra modules) ─────────────────────────────────────────
+*.tfstate
+*.tfstate.backup
+.terraform/

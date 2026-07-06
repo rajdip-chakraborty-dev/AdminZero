@@ -1,0 +1,946 @@
+openapi: 3.0.3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AdminZero — Enterprise Co-Pilot Skill Definitions
+# IBM watsonx Orchestrate · BetterWorldWithAI · 2026
+#
+# This OpenAPI 3.0 specification defines the full set of skills surfaced to
+# IBM watsonx Orchestrate for the AdminZero co-pilot.  Each path maps to one
+# Orchestrate "skill" and is backed by a live API endpoint (Microsoft Graph,
+# GitHub REST, Jira Cloud, or Slack).
+#
+# Authentication per integration:
+#   Microsoft Graph  → OAuth 2.0 Authorization Code (Azure AD)
+#   GitHub           → HTTP Bearer (Personal Access Token or GitHub App JWT)
+#   Jira             → HTTP Basic (email:api_token, base64-encoded)
+#   Slack            → HTTP Bearer (Bot Token)
+#
+# Replace every value surrounded by < > with your real credentials / IDs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+info:
+  title: AdminZero Enterprise Co-Pilot Skills
+  version: "1.0.0"
+  description: >
+    Unified OpenAPI skill manifest for the AdminZero watsonx Orchestrate
+    co-pilot.  Covers calendar ingestion, timesheet write-back, GitHub PR
+    listing, Outlook email summarisation, Jira blocker retrieval, and Slack
+    message delivery.
+  contact:
+    name: BetterWorldWithAI Team
+    email: team@betterworld.ai
+  license:
+    name: MIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Servers
+# ─────────────────────────────────────────────────────────────────────────────
+servers:
+  # Microsoft Graph
+  - url: https://graph.microsoft.com/v1.0
+    description: Microsoft Graph API v1.0 (Outlook, Calendar, Excel)
+    x-skill-group: microsoft
+
+  # GitHub REST
+  - url: https://api.github.com
+    description: GitHub REST API v3
+    x-skill-group: github
+
+  # Jira Cloud
+  - url: https://<YOUR_JIRA_DOMAIN>.atlassian.net/rest/api/3
+    description: Jira Cloud REST API v3
+    x-skill-group: jira
+
+  # Slack
+  - url: https://slack.com/api
+    description: Slack Web API
+    x-skill-group: slack
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Security Schemes
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+
+    MicrosoftOAuth2:
+      type: oauth2
+      description: >
+        Azure Active Directory OAuth 2.0 Authorization Code flow.
+        Register an App in Azure portal; grant delegated permissions:
+        Calendars.Read, Files.ReadWrite.All, Mail.Read, User.Read.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/<TENANT_ID>/oauth2/v2.0/authorize
+          tokenUrl:         https://login.microsoftonline.com/<TENANT_ID>/oauth2/v2.0/token
+          scopes:
+            Calendars.Read:         Read user calendar events
+            Files.ReadWrite.All:    Read and write Excel workbook files
+            Mail.Read:              Read user email messages
+            User.Read:              Read signed-in user profile
+
+    GitHubBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PAT
+      description: >
+        GitHub Personal Access Token (classic) or GitHub App installation JWT.
+        Required scopes: repo (read), pull_requests (read).
+
+    JiraBasicAuth:
+      type: http
+      scheme: basic
+      description: >
+        Jira Cloud basic authentication.
+        Encode as Base64("<your-email>:<your-api-token>") and pass in the
+        Authorization header.  Generate tokens at
+        https://id.atlassian.com/manage-profile/security/api-tokens
+
+    SlackBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: BotToken
+      description: >
+        Slack Bot Token (xoxb-…).  Required OAuth scopes:
+        chat:write, im:write, channels:read.
+
+  # ── Reusable Schemas ───────────────────────────────────────────────────────
+  schemas:
+
+    # ── Microsoft Graph ──────────────────────────────────────────────────────
+
+    CalendarEvent:
+      type: object
+      description: A single Microsoft Outlook calendar event (Graph API shape).
+      properties:
+        id:
+          type: string
+          example: "AAMkADc12345=="
+        subject:
+          type: string
+          example: "Sprint Planning – PROJ-ALPHA"
+        start:
+          $ref: '#/components/schemas/DateTimeTimeZone'
+        end:
+          $ref: '#/components/schemas/DateTimeTimeZone'
+        durationMinutes:
+          type: integer
+          example: 60
+        organizer:
+          $ref: '#/components/schemas/Recipient'
+        attendees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attendee'
+        isOnlineMeeting:
+          type: boolean
+        categories:
+          type: array
+          items:
+            type: string
+          example: ["PROJ-ALPHA"]
+        projectCode:
+          type: string
+          description: Synthetic field — cost-centre code inferred by AdminZero LLM.
+          example: "PROJ-ALPHA"
+
+    CalendarEventList:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarEvent'
+
+    DateTimeTimeZone:
+      type: object
+      properties:
+        dateTime:
+          type: string
+          format: date-time
+          example: "2026-01-06T09:00:00Z"
+        timeZone:
+          type: string
+          example: "UTC"
+
+    Recipient:
+      type: object
+      properties:
+        emailAddress:
+          type: object
+          properties:
+            name:    { type: string }
+            address: { type: string, format: email }
+
+    Attendee:
+      type: object
+      properties:
+        emailAddress:
+          type: object
+          properties:
+            name:    { type: string }
+            address: { type: string, format: email }
+        status:
+          type: object
+          properties:
+            response:
+              type: string
+              enum: [accepted, tentativelyAccepted, declined, notResponded, none]
+
+    TimesheetRow:
+      type: object
+      description: One row written to the Excel timesheet workbook via Graph API.
+      required: [employeeEmail, date, projectCode, hoursLogged]
+      properties:
+        employeeEmail:
+          type: string
+          format: email
+          example: "rajdip.chakraborty@betterworld.ai"
+        date:
+          type: string
+          format: date
+          example: "2026-01-10"
+        projectCode:
+          type: string
+          example: "PROJ-ALPHA"
+        taskCategory:
+          type: string
+          example: "Development"
+        hoursLogged:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 24
+          example: 3.5
+        notes:
+          type: string
+          example: "Implemented OAuth token refresh for Graph API connector."
+
+    TimesheetWriteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        rowsWritten:
+          type: integer
+        workbookUrl:
+          type: string
+          format: uri
+
+    EmailMessage:
+      type: object
+      description: Abbreviated Microsoft Graph message object.
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        from:
+          $ref: '#/components/schemas/Recipient'
+        receivedDateTime:
+          type: string
+          format: date-time
+        bodyPreview:
+          type: string
+        isRead:
+          type: boolean
+        conversationId:
+          type: string
+
+    EmailSummaryResponse:
+      type: object
+      properties:
+        messageCount:
+          type: integer
+        summaries:
+          type: array
+          items:
+            type: object
+            properties:
+              conversationId: { type: string }
+              subject:        { type: string }
+              summary:        { type: string, description: "LLM-generated thread summary" }
+              messageCount:   { type: integer }
+              latestSender:   { type: string }
+              latestReceived: { type: string, format: date-time }
+
+    # ── GitHub ───────────────────────────────────────────────────────────────
+
+    PullRequest:
+      type: object
+      description: GitHub REST API pull request object (abbreviated).
+      properties:
+        id:
+          type: integer
+        number:
+          type: integer
+        title:
+          type: string
+        state:
+          type: string
+          enum: [open, closed]
+        draft:
+          type: boolean
+        html_url:
+          type: string
+          format: uri
+        user:
+          type: object
+          properties:
+            login: { type: string }
+            name:  { type: string }
+        body:
+          type: string
+        labels:
+          type: array
+          items:
+            type: object
+            properties:
+              name:  { type: string }
+              color: { type: string }
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        requested_reviewers:
+          type: array
+          items:
+            type: object
+            properties:
+              login: { type: string }
+              name:  { type: string }
+        review_comments:
+          type: integer
+        commits:
+          type: integer
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        changed_files:
+          type: integer
+        ci_status:
+          type: string
+          enum: [success, failure, pending, neutral]
+
+    PullRequestList:
+      type: object
+      properties:
+        totalOpenPRs:
+          type: integer
+        pull_requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PullRequest'
+
+    # ── Jira ─────────────────────────────────────────────────────────────────
+
+    JiraIssue:
+      type: object
+      description: Jira Cloud REST API issue object (abbreviated fields).
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+          example: "ADMZ-42"
+        self:
+          type: string
+          format: uri
+        fields:
+          type: object
+          properties:
+            summary:
+              type: string
+            description:
+              type: string
+            issuetype:
+              type: object
+              properties:
+                name: { type: string }
+            priority:
+              type: object
+              properties:
+                name:
+                  type: string
+                  enum: [Blocker, Critical, Major, Minor, Trivial]
+            status:
+              type: object
+              properties:
+                name:
+                  type: string
+                  enum: [Blocked, "In Progress", Open, Reopened, "Under Review", Done]
+            assignee:
+              type: object
+              nullable: true
+              properties:
+                displayName:   { type: string }
+                emailAddress:  { type: string, format: email }
+            reporter:
+              type: object
+              properties:
+                displayName:   { type: string }
+                emailAddress:  { type: string, format: email }
+            labels:
+              type: array
+              items: { type: string }
+            created:
+              type: string
+              format: date-time
+            updated:
+              type: string
+              format: date-time
+            dueDate:
+              type: string
+              format: date-time
+              nullable: true
+            storyPoints:
+              type: integer
+              nullable: true
+            blockedReason:
+              type: string
+              nullable: true
+
+    JiraIssueList:
+      type: object
+      properties:
+        total:
+          type: integer
+        maxResults:
+          type: integer
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/JiraIssue'
+
+    # ── Slack ────────────────────────────────────────────────────────────────
+
+    SlackMessageRequest:
+      type: object
+      required: [channel, text]
+      properties:
+        channel:
+          type: string
+          description: Channel ID (C…) or user DM ID (D…)
+          example: "D0123ABC456"
+        text:
+          type: string
+          description: Plain-text fallback message (used by screen readers and notifications)
+          example: "Your timesheet has been submitted for this week."
+        blocks:
+          type: array
+          description: Slack Block Kit layout blocks (optional rich formatting)
+          items:
+            type: object
+        username:
+          type: string
+          default: "AdminZero Co-Pilot"
+        icon_emoji:
+          type: string
+          default: ":robot_face:"
+
+    SlackMessageResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        channel:
+          type: string
+        ts:
+          type: string
+          description: Slack message timestamp (also its unique ID)
+        message:
+          type: object
+
+    # ── Shared ───────────────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:    { type: string }
+            message: { type: string }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── SKILL 1 · Get Calendar Events (Microsoft Graph) ───────────────────────
+  /me/calendarView:
+    get:
+      operationId: get_calendar_events
+      summary: Retrieve calendar events for a date range
+      description: >
+        Fetches Outlook Calendar meeting entries for the authenticated user
+        within the given start/end window.  Used by the time-tracking skill to
+        classify meetings into project cost centres.
+      tags: [Microsoft Graph, Time Tracking]
+      security:
+        - MicrosoftOAuth2: [Calendars.Read]
+      parameters:
+        - name: startDateTime
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          example: "2026-01-06T00:00:00Z"
+          description: ISO 8601 start boundary (UTC)
+        - name: endDateTime
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          example: "2026-01-10T23:59:59Z"
+          description: ISO 8601 end boundary (UTC)
+        - name: $select
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "subject,start,end,attendees,organizer,categories,isOnlineMeeting"
+          description: OData $select — comma-separated field names
+        - name: $top
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        "200":
+          description: List of calendar events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventList'
+        "401":
+          description: Unauthorised — OAuth token missing or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden — missing Calendars.Read scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 2 · Write Timesheet Row (Microsoft Graph / Excel) ───────────────
+  /me/drive/items/{workbookItemId}/workbook/worksheets/{worksheetId}/tables/{tableId}/rows:
+    post:
+      operationId: write_timesheet_row
+      summary: Append a classified time-entry row to the Excel timesheet
+      description: >
+        Inserts one or more pre-classified timesheet rows (employee, date,
+        project code, hours) into a named Excel table within the user's
+        OneDrive timesheet workbook.
+      tags: [Microsoft Graph, Time Tracking]
+      security:
+        - MicrosoftOAuth2: [Files.ReadWrite.All]
+      parameters:
+        - name: workbookItemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: OneDrive item ID of the Excel workbook file
+          example: "01BYE5RZY6THXXXXXXXXXXX"
+        - name: worksheetId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Worksheet name or ID
+          example: "Timesheet"
+        - name: tableId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Named table ID within the worksheet
+          example: "TimesheetTable"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                values:
+                  type: array
+                  description: 2D array — each inner array is one row of cell values in column order
+                  items:
+                    type: array
+                    items: {}
+              example:
+                values:
+                  - ["rajdip.chakraborty@betterworld.ai", "2026-01-10", "PROJ-ALPHA",
+                     "Development", 3.5, "Implemented OAuth token refresh"]
+      responses:
+        "201":
+          description: Row(s) appended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimesheetWriteResponse'
+        "400":
+          description: Bad request — mismatched column count or type mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorised
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 3 · Get Open Pull Requests (GitHub) ─────────────────────────────
+  /repos/{owner}/{repo}/pulls:
+    get:
+      operationId: get_open_pull_requests
+      summary: List open pull requests for a repository
+      description: >
+        Returns all open (non-draft optional) pull requests for the specified
+        GitHub repository.  Used by the productivity agent to surface PRs
+        awaiting review.
+      tags: [GitHub, Productivity Agent]
+      security:
+        - GitHubBearerAuth: []
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "BetterWorldWithAI"
+        - name: repo
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "AdminZero"
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, closed, all]
+            default: open
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created, updated, popularity, long-running]
+            default: updated
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+            maximum: 100
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          description: List of pull request objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullRequest'
+        "401":
+          description: Bad credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 4 · Get PR Details (GitHub) ─────────────────────────────────────
+  /repos/{owner}/{repo}/pulls/{pull_number}:
+    get:
+      operationId: get_pr_details
+      summary: Get full details for a single pull request
+      description: >
+        Returns the complete detail record for one PR including diff stats,
+        reviewers, CI status, and the PR body (used as input to LLM summarisation).
+      tags: [GitHub, Productivity Agent]
+      security:
+        - GitHubBearerAuth: []
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: repo
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pull_number
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Pull request detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+        "404":
+          description: PR not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 5 · Summarise Emails (Microsoft Graph) ──────────────────────────
+  /me/messages:
+    get:
+      operationId: get_recent_emails
+      summary: Fetch recent unread email messages
+      description: >
+        Retrieves unread messages from the authenticated user's Outlook inbox,
+        filtered by a time window.  The raw messages are subsequently passed to
+        the watsonx.ai LLM chain for thread-level summarisation.
+      tags: [Microsoft Graph, Productivity Agent]
+      security:
+        - MicrosoftOAuth2: [Mail.Read]
+      parameters:
+        - name: $filter
+          in: query
+          required: false
+          schema:
+            type: string
+          description: OData $filter expression
+          example: "isRead eq false and receivedDateTime ge 2026-01-10T00:00:00Z"
+        - name: $select
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "id,subject,from,receivedDateTime,bodyPreview,isRead,conversationId"
+        - name: $top
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 25
+            maximum: 100
+        - name: $orderby
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "receivedDateTime desc"
+      responses:
+        "200":
+          description: List of email messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EmailMessage'
+        "401":
+          description: Unauthorised
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 6 · Get Jira Blockers (Jira Cloud) ──────────────────────────────
+  /search:
+    get:
+      operationId: get_jira_blockers
+      summary: Search Jira for blocked or critical issues
+      description: >
+        Executes a JQL query against the Jira Cloud project to surface all
+        issues currently in Blocked status or with Blocker/Critical priority
+        in the active sprint.
+      tags: [Jira, Productivity Agent]
+      security:
+        - JiraBasicAuth: []
+      parameters:
+        - name: jql
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Jira Query Language (JQL) expression
+          example: "project = ADMZ AND status = Blocked AND sprint in openSprints() ORDER BY priority DESC"
+        - name: fields
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "summary,status,priority,assignee,reporter,labels,created,updated,duedate,customfield_10016,comment"
+          description: Comma-separated field keys to return
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: startAt
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Jira issue search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JiraIssueList'
+        "400":
+          description: Invalid JQL syntax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorised — bad Jira API token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SKILL 7 · Send Slack Message ──────────────────────────────────────────
+  /chat.postMessage:
+    post:
+      operationId: send_slack_message
+      summary: Post a formatted message to a Slack channel or DM
+      description: >
+        Posts a message (plain text or Block Kit) to a Slack channel or direct
+        message.  Used as the final delivery step for all AdminZero agent
+        responses — timesheet confirmations, PR summaries, email digests, and
+        Jira blocker alerts.
+      tags: [Slack, Notifications]
+      security:
+        - SlackBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlackMessageRequest'
+            examples:
+              TimesheetConfirmation:
+                summary: Timesheet submission confirmation
+                value:
+                  channel: "D0123ABC456"
+                  text: "✅ Your timesheet for the week of Jan 6–10 has been submitted automatically."
+                  blocks:
+                    - type: section
+                      text:
+                        type: mrkdwn
+                        text: "*✅ Timesheet Submitted*\nWeek of Jan 6–10, 2026\n40.0 hrs across 3 projects."
+              PRReviewReminder:
+                summary: Open PR review reminder
+                value:
+                  channel: "D0123ABC456"
+                  text: "You have 3 open PRs awaiting your review."
+                  blocks:
+                    - type: section
+                      text:
+                        type: mrkdwn
+                        text: "*📋 Open PRs Awaiting Review*\n• feat(calendar): add bulk-fetch endpoint\n• fix(auth): resolve null-pointer race condition\n• chore(deps): bump requests to 2.31.0"
+      responses:
+        "200":
+          description: Message posted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlackMessageResponse'
+        "400":
+          description: Invalid channel or malformed Block Kit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorised — invalid Slack Bot Token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tags (Skill Groups)
+# ─────────────────────────────────────────────────────────────────────────────
+tags:
+  - name: Microsoft Graph
+    description: Skills backed by the Microsoft Graph API (Outlook, Calendar, Excel, Mail)
+  - name: Time Tracking
+    description: Automated Friday time-tracking pipeline skills
+  - name: GitHub
+    description: Skills backed by the GitHub REST API
+  - name: Jira
+    description: Skills backed by the Jira Cloud REST API
+  - name: Slack
+    description: Skills backed by the Slack Web API
+  - name: Productivity Agent
+    description: All-in-one productivity agent skills surfaced via chat interface
+
+# ─────────────────────────────────────────────────────────────────────────────
+# x-watsonx-orchestrate extensions
+# (Non-standard vendor extensions recognised by IBM watsonx Orchestrate)
+# ─────────────────────────────────────────────────────────────────────────────
+x-watsonx-orchestrate:
+  assistant-name: "AdminZero Enterprise Co-Pilot"
+  assistant-description: >
+    Eliminates administrative and operational friction for enterprise knowledge
+    workers via automated time-tracking, PR reviews, email summarisation, and
+    Jira blocker detection — all through a single Slack-based conversational
+    interface powered by IBM watsonx.
+  skill-groups:
+    - id: time-tracking
+      name: "Time Tracking (Pillar 1)"
+      skills: [get_calendar_events, write_timesheet_row]
+    - id: productivity-agent
+      name: "Productivity Agent (Pillar 2)"
+      skills: [get_open_pull_requests, get_pr_details, get_recent_emails,
+               get_jira_blockers, send_slack_message]
+  llm-config:
+    model-id: "ibm/granite-13b-chat-v2"
+    temperature: 0.2
+    max-tokens: 1024
+  watsonx-ai-project-id: "<YOUR_WATSONX_AI_PROJECT_ID>"
