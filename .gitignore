@@ -85,3 +85,5 @@ sandbox_setup/output/
 *.tfstate
 *.tfstate.backup
 .terraform/
+# --- Local patch files ---
+patch/

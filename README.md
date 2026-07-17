@@ -95,11 +95,13 @@ AdminZero/
 +-- .gitignore                         <- Python-specific ignores
 +-- sandbox_setup/
 |   +-- generate_dummy_data.py         <- Generates all mock data fixtures
+|   +-- mock_server.py                 <- Zero-dependency local API server (demo fallback)
 |   +-- output/                        <- (git-ignored) generated files
 |       +-- calendar_events.json
 |       +-- timesheet_ledger.csv
 |       +-- github_pull_requests.json
 |       +-- jira_tickets.json
+|       +-- outlook_emails.json
 +-- orchestrate_skills/
     +-- swagger.yaml                   <- OpenAPI 3.0 skill spec for watsonx Orchestrate
 ```
@@ -154,7 +156,49 @@ python generate_dummy_data.py
 # Output files written to sandbox_setup/output/
 ```
 
-### 3. Register Skills in watsonx Orchestrate
+### 3. (Optional) Run the Local Mock API Server
+
+If the external free-tier accounts (IBM watsonx Orchestrate, Azure AD /
+Microsoft Graph, Jira Cloud, Slack) are not yet provisioned, run the
+**zero-dependency** local mock server. It serves every endpoint in
+`swagger.yaml` from the generated datasets — no `pip install`, no internet,
+no credentials — so the demo works fully offline.
+
+```bash
+cd sandbox_setup
+python mock_server.py            # serves http://127.0.0.1:8080
+# python mock_server.py --port 9000 --host 0.0.0.0   # custom bind
+```
+
+Then open `http://127.0.0.1:8080/` for a live endpoint index, or drive the
+skills directly:
+
+```bash
+# Pillar 1 — pull this week's calendar (get_calendar_events)
+curl "http://127.0.0.1:8080/me/calendarView"
+
+# Pillar 2 — what's blocking the sprint? (get_jira_blockers)
+curl "http://127.0.0.1:8080/search?jql=status%20=%20Blocked%20ORDER%20BY%20priority%20DESC"
+
+# Pillar 2 — open PRs awaiting review (get_open_pull_requests)
+curl "http://127.0.0.1:8080/repos/BetterWorldWithAI/AdminZero/pulls"
+
+# Pillar 2 — summarise unread email (get_recent_emails)
+curl "http://127.0.0.1:8080/me/messages?\$filter=isRead%20eq%20false"
+
+# Delivery — post to Slack (send_slack_message)
+curl -X POST "http://127.0.0.1:8080/chat.postMessage" \
+     -H 'Content-Type: application/json' \
+     -d '{"channel":"D0123ABC456","text":"Your timesheet has been submitted."}'
+```
+
+In watsonx Orchestrate, point each skill connection's server URL at
+`http://127.0.0.1:8080` (or your host's LAN address) to demo against the
+mock instead of the live APIs. The mock returns Microsoft Graph / GitHub /
+Jira / Slack-shaped payloads, so the same skills work unchanged when you
+later swap the base URL back to the real services.
+
+### 4. Register Skills in watsonx Orchestrate
 
 1. Log in to your IBM watsonx Orchestrate instance.
 2. Navigate to **Skills > Add Skill > From API (OpenAPI)**.
@@ -162,7 +206,7 @@ python generate_dummy_data.py
 4. Authenticate each connection (Microsoft OAuth2, GitHub PAT, Jira Basic Auth, Slack Bot Token).
 5. Enable the skills for your personal assistant or a shared team assistant.
 
-### 4. Test via Chat
+### 5. Test via Chat
 
 ```
 "Log my hours for this week based on my calendar."

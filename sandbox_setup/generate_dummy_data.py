@@ -10,6 +10,7 @@ demo walkthroughs, and watsonx Orchestrate skill testing:
   output/timesheet_ledger.csv        – Microsoft Excel-style timesheet ledger
   output/github_pull_requests.json   – Active GitHub Pull Request payloads
   output/jira_tickets.json           – Open Jira project bug / blocker tickets
+  output/outlook_emails.json         – Microsoft Outlook unread email messages
 
 Dependencies:
     pip install faker
@@ -93,6 +94,21 @@ PR_TITLE_TEMPLATES = [
     "test({scope}): add unit tests for {component} parser",
     "perf({scope}): cache {resource} to reduce Graph API calls",
     "ci: add {tool} workflow for automated skill validation",
+]
+
+EMAIL_SUBJECT_TEMPLATES = [
+    "Re: {project} timeline slipping — need a call today",
+    "Action required: approve Q{quarter} budget by EOD",
+    "Escalation: {customer} reported {service} degradation",
+    "Review request: PR for {component} is blocking the release",
+    "FYI — watsonx Orchestrate trial credentials provisioned",
+    "Reminder: submit your weekly timesheet before Friday 5pm",
+    "Meeting notes: {project} architecture sync",
+    "Question about the {component} OAuth scopes",
+    "Weekly digest: {project} sprint progress",
+    "Invite: {customer} stakeholder demo next week",
+    "Heads up: {service} maintenance window this weekend",
+    "Follow-up: onboarding checklist for new hire",
 ]
 
 JIRA_SUMMARY_TEMPLATES = [
@@ -432,6 +448,49 @@ def generate_jira_tickets(n: int = 20) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Generator 5 — Outlook Unread Emails (JSON)
+# ---------------------------------------------------------------------------
+
+def generate_emails(n: int = 18, ref: datetime | None = None) -> list[dict]:
+    """
+    Simulate Microsoft Graph API `GET /me/messages` response items.
+    Recent (mostly unread) inbox messages for the current user, used by the
+    email-summarisation skill (Pillar 2).
+    """
+    if ref is None:
+        ref = datetime.now(timezone.utc)
+
+    messages = []
+    for i in range(1, n + 1):
+        received  = ref - timedelta(hours=random.randint(0, 72),
+                                    minutes=random.randint(0, 59))
+        sender    = random.choice(TEAM_MEMBERS)
+        subject   = random.choice(EMAIL_SUBJECT_TEMPLATES).format(
+            project=random.choice(PROJECT_CODES),
+            quarter=random.randint(1, 4),
+            component=random.choice(COMPONENTS),
+            service=random.choice(SERVICES),
+            customer=random.choice(CUSTOMERS),
+        )
+        messages.append({
+            "id":               f"AAMkMSG{random.randint(100000, 999999)}==",
+            "subject":          subject,
+            "from": {
+                "emailAddress": {"name": sender["name"], "address": sender["email"]}
+            },
+            "receivedDateTime": _iso(received),
+            "bodyPreview":      _rand_sentence(18),
+            "isRead":           random.random() < 0.25,
+            "importance":       random.choice(["normal", "high"]),
+            "hasAttachments":   random.random() < 0.3,
+            "conversationId":   f"CONV{random.randint(1000, 9999)}",
+        })
+
+    messages.sort(key=lambda m: m["receivedDateTime"], reverse=True)
+    return messages
+
+
+# ---------------------------------------------------------------------------
 # Write utilities
 # ---------------------------------------------------------------------------
 
@@ -497,6 +556,10 @@ def main() -> None:
         "issues":       generate_jira_tickets(20),
     }
     _write_json(jira_data["issues"], "jira_tickets.json")
+
+    print("\n➤  Generating Outlook unread emails …")
+    email_data = generate_emails(18, ref)
+    _write_json(email_data, "outlook_emails.json")
 
     print("\n✔  All mock datasets written to:")
     print(f"   {OUTPUT_DIR}\n")
